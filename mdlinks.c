@@ -1,10 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <dirent.h>
-#include <sys/_types/_s_ifmt.h>
 #include <sys/stat.h>
-#include <sys/syslimits.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <yaml.h>
@@ -14,7 +13,7 @@
 #include <errno.h>
 #include <limits.h>
 
-#define NUM_WORKER_THREADS 4
+#define NUM_WORKER_THREADS 8
 #define BUFFER_SIZE (NUM_WORKER_THREADS * 4)
 
 typedef struct {
