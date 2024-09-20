@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <sys/_types/_s_ifmt.h>
 #include <sys/stat.h>
+#include <sys/syslimits.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <yaml.h>
@@ -13,16 +14,16 @@
 #include <errno.h>
 #include <limits.h>
 
-#define MAX_FILENAME_LENGTH 256
 #define NUM_WORKER_THREADS 4
-#define BUFFER_SIZE NUM_WORKER_THREADS * 4
+#define BUFFER_SIZE (NUM_WORKER_THREADS * 4)
 
 typedef struct {
-    char filenames[BUFFER_SIZE][MAX_FILENAME_LENGTH];
+    char filenames[BUFFER_SIZE][PATH_MAX];
     int64_t file_sizes[BUFFER_SIZE];
     int start;
     int end;
     int count;
+    int done;
     pthread_mutex_t mutex;
     pthread_mutex_t out_mutex;
     pthread_cond_t not_empty;
@@ -35,6 +36,7 @@ void ring_buffer_init(ring_buffer_t *rb) {
     rb->start = 0;
     rb->end = 0;
     rb->count = 0;
+    rb->done = 0;
     pthread_mutex_init(&rb->mutex, NULL);
     pthread_mutex_init(&rb->out_mutex, NULL);
     pthread_cond_init(&rb->not_empty, NULL);
@@ -46,7 +48,7 @@ void ring_buffer_enqueue(ring_buffer_t *rb, const char *filename, int64_t size) 
     while (rb->count == BUFFER_SIZE) {
         pthread_cond_wait(&rb->not_full, &rb->mutex);
     }
-    strncpy(rb->filenames[rb->end], filename, MAX_FILENAME_LENGTH);
+    strncpy(rb->filenames[rb->end], filename, PATH_MAX);
     rb->file_sizes[rb->end] = size;
     rb->end = (rb->end + 1) % BUFFER_SIZE;
     rb->count++;
@@ -57,9 +59,14 @@ void ring_buffer_enqueue(ring_buffer_t *rb, const char *filename, int64_t size) 
 char *ring_buffer_dequeue(ring_buffer_t *rb, char *filename, int64_t *size) {
     pthread_mutex_lock(&rb->mutex);
     while (rb->count == 0) {
+        if (rb->done) {
+            pthread_mutex_unlock(&rb->mutex);
+            return NULL;
+        }
         pthread_cond_wait(&rb->not_empty, &rb->mutex);
     }
-    strncpy(filename, rb->filenames[rb->start], MAX_FILENAME_LENGTH);
+    strncpy(filename, rb->filenames[rb->start], PATH_MAX);
+    // fprintf(stderr, "Worker thread %ld processing %d file: %s\n", pthread_self(), rb->start, filename);
     *size = rb->file_sizes[rb->start];
     rb->start = (rb->start + 1) % BUFFER_SIZE;
     rb->count--;
@@ -147,14 +154,14 @@ void* process_file(char *arg, int64_t size, ring_buffer_t *rb) {
 }
 
 void *worker_thread(void *arg) {
-    char filename[MAX_FILENAME_LENGTH];
+    char filename[PATH_MAX];
     int64_t size;
     while (1) {
-        ring_buffer_dequeue(&ring_buffer, filename, &size);
-        if (strcmp(filename, "END") == 0) {
+        char *res = ring_buffer_dequeue(&ring_buffer, filename, &size);
+        if (res == NULL) {
             break;
         }
-        // printf("Worker thread %ld processing file: %s\n", pthread_self(), filename);
+        // fprintf(stderr, "Worker thread %ld processing file: %s\n", pthread_self(), filename);
         process_file(filename, size, &ring_buffer);
     }
     return NULL;
@@ -162,7 +169,15 @@ void *worker_thread(void *arg) {
 
 void list_files(const char *path) {
     struct stat path_stat;
-    stat(path, &path_stat);
+    if (stat(path, &path_stat) == -1) {
+        perror("Failed to stat path");
+        return;
+    }
+
+    // Don't process symlinks
+    // if (S_ISLNK(path_stat.st_mode)) {
+    //     return;
+    // }
 
     if (S_ISDIR(path_stat.st_mode)) {
         DIR *dir = opendir(path);
@@ -184,7 +199,8 @@ void list_files(const char *path) {
         }
 
         closedir(dir);
-    } else if (path_stat.st_mode & S_IFREG && filter_file(path)) {
+    } else if (S_ISREG(path_stat.st_mode) && filter_file(path)) {
+        // fprintf(stderr, "enqueueing: %s\n", path);
         ring_buffer_enqueue(&ring_buffer, path, path_stat.st_size);
     }
 }
@@ -211,9 +227,11 @@ int main(int argc, char *argv[]) {
             return 1;
         }
     }
-    for (int i = 0; i < NUM_WORKER_THREADS; i++) {
-        ring_buffer_enqueue(&ring_buffer, "END", 0);
-    }
+
+    pthread_mutex_lock(&ring_buffer.mutex);
+    ring_buffer.done = 1;
+    pthread_cond_broadcast(&ring_buffer.not_empty);
+    pthread_mutex_unlock(&ring_buffer.mutex);
     for (int i = 0; i < NUM_WORKER_THREADS; i++) {
         pthread_join(workers[i], NULL);
     }

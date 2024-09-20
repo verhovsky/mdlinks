@@ -11,7 +11,3 @@ brew install gcc cmark libyaml # on macOS
 make
 ./mdlinks somefile.md
 ```
-
-This multithreaded version doesn't work. Even when running with just
-1 worker thread it doesn't print out the same number of URLs between
-runs, though it processes every file once.
