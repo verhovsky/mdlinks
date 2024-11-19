@@ -215,6 +215,10 @@ int main(int argc, char *argv[]) {
     ring_buffer_init(&ring_buffer);
 
     num_procs = sysconf(_SC_NPROCESSORS_ONLN);
+    if (num_procs < 1) {
+        num_procs = 1;
+    }
+
     pthread_t workers[num_procs];
     for (int i = 0; i < num_procs; i++) {
         pthread_create(&workers[i], NULL, worker_thread, NULL);
