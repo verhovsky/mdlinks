@@ -6,15 +6,14 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <yaml.h>
-#include <cmark.h>
 #include <ctype.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <limits.h>
 
-#define NUM_WORKER_THREADS 8
-#define BUFFER_SIZE (NUM_WORKER_THREADS * 4)
+#include <cmark.h>
+
+#define BUFFER_SIZE 1024
 
 typedef struct {
     char filenames[BUFFER_SIZE][PATH_MAX];
@@ -205,15 +204,19 @@ void list_files(const char *path) {
 }
 
 int main(int argc, char *argv[]) {
+    int num_procs;
+
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <directory_path>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
+
     ring_buffer_init(&ring_buffer);
 
-    pthread_t workers[NUM_WORKER_THREADS];
-    for (int i = 0; i < NUM_WORKER_THREADS; i++) {
+    num_procs = sysconf(_SC_NPROCESSORS_ONLN);
+    pthread_t workers[num_procs];
+    for (int i = 0; i < num_procs; i++) {
         pthread_create(&workers[i], NULL, worker_thread, NULL);
     }
 
@@ -231,7 +234,7 @@ int main(int argc, char *argv[]) {
     ring_buffer.done = 1;
     pthread_cond_broadcast(&ring_buffer.not_empty);
     pthread_mutex_unlock(&ring_buffer.mutex);
-    for (int i = 0; i < NUM_WORKER_THREADS; i++) {
+    for (int i = 0; i < num_procs; i++) {
         pthread_join(workers[i], NULL);
     }
 
