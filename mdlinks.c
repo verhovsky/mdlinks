@@ -204,7 +204,7 @@ void list_files(const char *path) {
 }
 
 int main(int argc, char *argv[]) {
-    int num_procs;
+    long num_procs;
 
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <directory_path>\n", argv[0]);
